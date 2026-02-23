@@ -1,7 +1,8 @@
-"""Pre-commit hook that extracts SQL from Alembic migrations and lints with squawk."""
+"""Pre-commit hook that generates DDL via alembic upgrade --sql and lints with squawk."""
 
 import ast
 import configparser
+import os
 import subprocess
 import sys
 import tempfile
@@ -31,50 +32,98 @@ def find_migrations_path():
     return None
 
 
-def extract_sql(filepath):
-    """Parse a migration file and extract SQL strings from op.execute() calls."""
+class RevisionInfo:
+    __slots__ = ("revision", "down_revision", "is_merge")
+
+    def __init__(self, revision, down_revision, is_merge):
+        self.revision = revision
+        self.down_revision = down_revision
+        self.is_merge = is_merge
+
+
+def extract_revision_info(filepath):
+    """Parse a migration file to extract revision and down_revision from module-level assignments."""
     with open(filepath) as f:
         try:
             tree = ast.parse(f.read())
         except SyntaxError:
-            return []
+            return None
 
-    statements = []
+    revision = None
+    down_revision = None
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
             continue
 
-        if not (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "op"
-            and node.args
-        ):
-            continue
+        name = node.targets[0].id
+        if name == "revision":
+            if isinstance(node.value, ast.Constant) and isinstance(
+                node.value.value, str
+            ):
+                revision = node.value.value
+        elif name == "down_revision":
+            if isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    down_revision = node.value.value
+                elif node.value.value is None:
+                    down_revision = None
+            elif isinstance(node.value, ast.Tuple):
+                values = []
+                for elt in node.value.elts:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        values.append(elt.value)
+                down_revision = tuple(values)
 
-        sql = _extract_string(node.args[0])
-        if sql:
-            statements.append(sql)
+    if revision is None:
+        return None
 
-    return statements
+    is_merge = isinstance(down_revision, tuple)
+    return RevisionInfo(
+        revision=revision, down_revision=down_revision, is_merge=is_merge
+    )
 
 
-def _extract_string(node):
-    """Extract a string value from an AST node, handling common wrappers."""
-    # Direct string literal: op.execute("SQL")
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+def generate_sql(filepath):
+    """Run alembic upgrade --sql to generate the complete DDL for a migration."""
+    info = extract_revision_info(filepath)
+    if info is None:
+        return None
 
-    # sa.text("SQL") or text("SQL")
-    if isinstance(node, ast.Call) and node.args:
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "text":
-            return _extract_string(node.args[0])
-        if isinstance(node.func, ast.Name) and node.func.id == "text":
-            return _extract_string(node.args[0])
+    if info.is_merge:
+        return None
 
-    return None
+    base = info.down_revision if info.down_revision else "base"
+    target = f"{base}:{info.revision}"
+
+    env = os.environ.copy()
+    if "DATABASE_URL" not in env:
+        env["DATABASE_URL"] = "postgresql://localhost/lint"
+
+    try:
+        result = subprocess.run(
+            ["alembic", "upgrade", target, "--sql"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except FileNotFoundError:
+        print(
+            "squawk-alembic: alembic not found. Ensure alembic is installed in your environment.",
+            file=sys.stderr,
+        )
+        return None
+
+    if result.returncode != 0:
+        print(
+            f"squawk-alembic: alembic upgrade --sql failed for {filepath}:\n{result.stderr}",
+            file=sys.stderr,
+        )
+        return None
+
+    return result.stdout
 
 
 def check_autocommit_blocks(filepath):
@@ -88,6 +137,18 @@ def check_autocommit_blocks(filepath):
     checker = _AutocommitChecker()
     checker.visit(tree)
     return checker.warnings
+
+
+def _has_concurrent_kwarg(node):
+    """Check if an AST Call node has postgresql_concurrently=True."""
+    for kw in node.keywords:
+        if (
+            kw.arg == "postgresql_concurrently"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+        ):
+            return True
+    return False
 
 
 class _AutocommitChecker(ast.NodeVisitor):
@@ -113,15 +174,36 @@ class _AutocommitChecker(ast.NodeVisitor):
     def visit_Call(self, node):
         if (
             isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "op"
-            and node.args
         ):
-            sql = _extract_string(node.args[0])
-            if sql and "concurrently" in sql.lower() and not self._in_autocommit:
-                self.warnings.append(node.lineno)
+            # op.execute("...CONCURRENTLY...")
+            if node.func.attr == "execute" and node.args:
+                sql = _extract_string(node.args[0])
+                if sql and "concurrently" in sql.lower() and not self._in_autocommit:
+                    self.warnings.append(node.lineno)
+
+            # op.create_index(..., postgresql_concurrently=True)
+            # op.drop_index(..., postgresql_concurrently=True)
+            if node.func.attr in ("create_index", "drop_index"):
+                if _has_concurrent_kwarg(node) and not self._in_autocommit:
+                    self.warnings.append(node.lineno)
+
         self.generic_visit(node)
+
+
+def _extract_string(node):
+    """Extract a string value from an AST node, handling common wrappers."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+
+    if isinstance(node, ast.Call) and node.args:
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "text":
+            return _extract_string(node.args[0])
+        if isinstance(node.func, ast.Name) and node.func.id == "text":
+            return _extract_string(node.args[0])
+
+    return None
 
 
 def main():
@@ -152,14 +234,12 @@ def main():
             )
             exit_code = 1
 
-        statements = extract_sql(filepath)
-        if not statements:
+        sql = generate_sql(filepath)
+        if not sql:
             continue
 
-        combined = "\n".join(statements)
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
-            tmp.write(combined)
+            tmp.write(sql)
             tmp_path = tmp.name
 
         try:

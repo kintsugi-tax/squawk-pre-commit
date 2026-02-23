@@ -2,7 +2,9 @@
 
 A [pre-commit](https://pre-commit.com/) hook that lints SQL in [Alembic](https://alembic.sqlalchemy.org/) migrations using [squawk](https://squawkhq.com/), a PostgreSQL migration linter.
 
-Squawk operates on raw SQL files, but Alembic migrations are Python. This hook bridges the gap by extracting SQL from `op.execute()` calls in migration files and passing it to squawk for analysis.
+Squawk operates on raw SQL files, but Alembic migrations are Python. This hook bridges the gap by generating DDL via `alembic upgrade --sql` (offline mode) and passing the complete SQL output to squawk for analysis. This captures all SQL statements a migration produces, including ORM operations like `op.create_index()`, `op.create_table()`, and `op.alter_column()`.
+
+The hook also checks that concurrent index operations (`CONCURRENTLY` in `op.execute()` or `postgresql_concurrently=True` in `op.create_index()` / `op.drop_index()`) are wrapped in `autocommit_block()`.
 
 ## Usage
 
@@ -11,12 +13,12 @@ Add the following to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
     - repo: https://github.com/kintsugi-tax/kintsugi-squawk
-      rev: v0.1.0
+      rev: v0.2.0
       hooks:
           - id: squawk-alembic
 ```
 
-No additional configuration is required. The hook auto-detects your migrations directory by reading `script_location` from `alembic.ini`.
+No additional configuration is required. The hook auto-detects your migrations directory by reading `script_location` from `alembic.ini`. The consumer's `alembic` must be available on PATH (the hook calls it via subprocess).
 
 ## How It Works
 
@@ -24,12 +26,11 @@ When pre-commit runs, the hook:
 
 1. Parses `alembic.ini` to find the migrations `versions/` directory
 2. Filters staged files to only those under that directory
-3. Extracts SQL strings from `op.execute()` calls using Python's AST parser
-4. Pipes the extracted SQL to squawk for linting
+3. Checks for concurrent operations outside `autocommit_block()`
+4. Runs `alembic upgrade --sql` to generate the complete DDL for each migration
+5. Pipes the generated SQL to squawk for linting
 
-The hook handles common patterns including `op.execute("...")`, `op.execute(sa.text("..."))`, triple-quoted strings, and implicit string concatenation.
-
-ORM-level operations like `op.add_column()` and `op.create_table()` are not linted, since they don't contain raw SQL. These produce safe, predictable DDL that squawk is less likely to flag.
+Merge migrations (where `down_revision` is a tuple) are skipped since they produce no DDL.
 
 ## Squawk Configuration
 
@@ -41,6 +42,7 @@ Squawk reads its configuration from `.squawk.toml` in the consumer repo root. Se
 
 * Python (version 3.12)
 * Poetry
+* squawk-cli (`pip install squawk-cli`)
 
 **Steps:**
 

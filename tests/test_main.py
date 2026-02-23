@@ -24,90 +24,191 @@ def write_migration(repo, filename, source):
     return f"migrations/versions/{filename}"
 
 
-class TestMain:
-    def test_no_files(self, repo):
-        with patch("sys.argv", ["squawk-alembic"]):
-            assert main() == 0
+def make_result(returncode=0, stdout="", stderr=""):
+    return type(
+        "Result", (), {"returncode": returncode, "stdout": stdout, "stderr": stderr}
+    )()
 
-    def test_no_alembic_ini(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        with patch("sys.argv", ["squawk-alembic", "some_file.py"]):
-            assert main() == 0
 
-    def test_file_outside_migrations_skipped(self, repo):
-        other = repo / "other.py"
-        other.write_text("op.execute('DROP TABLE foo')")
-        with patch("sys.argv", ["squawk-alembic", "other.py"]):
-            assert main() == 0
+def fake_subprocess(alembic_result=None, squawk_result=None):
+    """Return a side_effect function that dispatches based on the command."""
+    alembic_res = alembic_result or make_result(stdout="CREATE TABLE foo (id int);\n")
+    squawk_res = squawk_result or make_result()
 
-    def test_migration_with_no_sql_skipped(self, repo):
-        path = write_migration(
-            repo,
-            "001_add_column.py",
-            """
-            from alembic import op
-            import sqlalchemy as sa
+    def side_effect(cmd, **kwargs):
+        if cmd[0] == "alembic":
+            return alembic_res
+        if cmd[0] == "squawk":
+            return squawk_res
+        raise ValueError(f"unexpected command: {cmd}")
 
-            def upgrade():
-                op.add_column('users', sa.Column('email', sa.String(255)))
-            """,
-        )
-        with patch("sys.argv", ["squawk-alembic", path]):
-            assert main() == 0
+    return side_effect
 
-    def test_squawk_success(self, repo):
-        path = write_migration(
-            repo,
-            "002_raw_sql.py",
-            """
-            from alembic import op
 
-            def upgrade():
-                op.execute("CREATE TABLE foo (id int)")
-            """,
-        )
-        mock_result = type(
-            "Result",
-            (),
-            {
-                "returncode": 0,
-                "stdout": "",
-                "stderr": "",
-            },
-        )()
-        with (
-            patch("sys.argv", ["squawk-alembic", path]),
-            patch("subprocess.run", return_value=mock_result) as mock_run,
-        ):
-            assert main() == 0
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args[0][0]
-            assert call_args[0] == "squawk"
+def test_no_files(repo):
+    with patch("sys.argv", ["squawk-alembic"]):
+        assert main() == 0
 
-    def test_squawk_failure(self, repo, capsys):
-        path = write_migration(
-            repo,
-            "003_bad_sql.py",
-            """
-            from alembic import op
 
-            def upgrade():
-                op.execute("ALTER TABLE foo ADD COLUMN bar int")
-            """,
-        )
-        mock_result = type(
-            "Result",
-            (),
-            {
-                "returncode": 1,
-                "stdout": "some squawk warning\n",
-                "stderr": "",
-            },
-        )()
-        with (
-            patch("sys.argv", ["squawk-alembic", path]),
-            patch("subprocess.run", return_value=mock_result),
-        ):
-            assert main() == 1
-        captured = capsys.readouterr()
-        assert "some squawk warning" in captured.out
+def test_no_alembic_ini(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["squawk-alembic", "some_file.py"]):
+        assert main() == 0
+
+
+def test_file_outside_migrations_skipped(repo):
+    other = repo / "other.py"
+    other.write_text("op.execute('DROP TABLE foo')")
+    with patch("sys.argv", ["squawk-alembic", "other.py"]):
+        assert main() == 0
+
+
+def test_squawk_success(repo):
+    path = write_migration(
+        repo,
+        "002_raw_sql.py",
+        """
+        revision = 'abc123'
+        down_revision = 'def456'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
+    ):
+        assert main() == 0
+        assert mock_run.call_count == 2
+        alembic_call = mock_run.call_args_list[0][0][0]
+        assert alembic_call[0] == "alembic"
+        assert "def456:abc123" in alembic_call
+        squawk_call = mock_run.call_args_list[1][0][0]
+        assert squawk_call[0] == "squawk"
+
+
+def test_squawk_failure(repo, capsys):
+    path = write_migration(
+        repo,
+        "003_bad_sql.py",
+        """
+        revision = 'abc123'
+        down_revision = 'def456'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("ALTER TABLE foo ADD COLUMN bar int")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(
+                squawk_result=make_result(returncode=1, stdout="some squawk warning\n"),
+            ),
+        ),
+    ):
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "some squawk warning" in captured.out
+
+
+def test_alembic_failure_skips_file(repo, capsys):
+    path = write_migration(
+        repo,
+        "004_alembic_fail.py",
+        """
+        revision = 'abc123'
+        down_revision = 'def456'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(
+                alembic_result=make_result(returncode=1, stderr="alembic error\n"),
+            ),
+        ),
+    ):
+        assert main() == 0
+    captured = capsys.readouterr()
+    assert "alembic upgrade --sql failed" in captured.err
+
+
+def test_missing_alembic_binary(repo, capsys):
+    path = write_migration(
+        repo,
+        "005_no_alembic.py",
+        """
+        revision = 'abc123'
+        down_revision = 'def456'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch("subprocess.run", side_effect=FileNotFoundError),
+    ):
+        assert main() == 0
+    captured = capsys.readouterr()
+    assert "alembic not found" in captured.err
+
+
+def test_merge_migration_skipped(repo):
+    path = write_migration(
+        repo,
+        "006_merge.py",
+        """
+        revision = 'merge001'
+        down_revision = ('abc123', 'def456')
+        branch_labels = None
+        depends_on = None
+
+        def upgrade():
+            pass
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch("subprocess.run") as mock_run,
+    ):
+        assert main() == 0
+        mock_run.assert_not_called()
+
+
+def test_first_migration_uses_base(repo):
+    path = write_migration(
+        repo,
+        "007_first.py",
+        """
+        revision = 'first001'
+        down_revision = None
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
+    ):
+        assert main() == 0
+        alembic_call = mock_run.call_args_list[0][0][0]
+        assert "base:first001" in alembic_call
