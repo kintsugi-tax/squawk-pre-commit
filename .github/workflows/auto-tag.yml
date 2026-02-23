@@ -1,0 +1,34 @@
+name: Auto Tag
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag if needed
+        run: |
+          VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          TAG="v${VERSION}"
+
+          echo "Detected version: $VERSION"
+          echo "Tag: $TAG"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Nothing to do."
+            exit 0
+          fi
+
+          echo "Creating and pushing tag $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"

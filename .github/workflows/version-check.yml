@@ -1,0 +1,29 @@
+name: Version Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-version-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          INIT_VERSION=$(grep '^__version__ = ' squawk_alembic/__init__.py | sed 's/__version__ = "\(.*\)"/\1/')
+
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          echo "__init__.py version:    $INIT_VERSION"
+
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ]; then
+            echo "::error::Version mismatch: pyproject.toml ($PYPROJECT_VERSION) != __init__.py ($INIT_VERSION)"
+            echo "Run 'make bump VERSION=x.y.z' to update both files."
+            exit 1
+          fi
+
+          echo "Versions match."

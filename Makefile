@@ -1,4 +1,6 @@
-.PHONY: setup_pre_commit run_pre-commit run_unit_tests run_ruff run_pyrefly clean help
+.PHONY: setup_pre_commit run_pre-commit run_unit_tests run_ruff run_pyrefly clean help bump
+
+INIT_PY := squawk_alembic/__init__.py
 
 # This trick comes from https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 help:
@@ -23,3 +25,18 @@ run_pyrefly: ## Run pyrefly, a static type checker for Python
 clean: ## Clean up the project (e.g., remove cache files)
 	@find . -type f -name '*.pyc' -delete
 	@find . -type d -name '__pycache__' -delete
+
+bump: ## Bump version (usage: make bump VERSION=0.2.0)
+ifndef VERSION
+	$(error Usage: make bump VERSION=0.2.0)
+endif
+	@echo "Bumping version to $(VERSION)"
+	@if ! echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		echo "Error: VERSION must be in semver format (e.g. 0.2.0)"; \
+		exit 1; \
+	fi
+	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' pyproject.toml
+	rm -f pyproject.toml.bak
+	sed -i.bak 's/^__version__ = ".*"/__version__ = "$(VERSION)"/' $(INIT_PY)
+	rm -f $(INIT_PY).bak
+	@echo "Updated pyproject.toml and $(INIT_PY) to $(VERSION)"
