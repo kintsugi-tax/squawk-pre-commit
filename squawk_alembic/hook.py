@@ -1,13 +1,13 @@
 """Pre-commit hook that generates DDL via alembic upgrade --sql and lints with squawk."""
 
 import argparse
-import ast
-import configparser
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from ast import Assign, Constant, Name, Tuple, iter_child_nodes, parse
+from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
 
 _BRANCH_RE = re.compile(r"^[a-zA-Z0-9._/\-]+$")
@@ -19,12 +19,12 @@ def find_migrations_path():
     if not config_path.exists():
         return None
 
-    config = configparser.ConfigParser()
+    config = ConfigParser()
     config.read(config_path)
 
     try:
         script_location = config.get("alembic", "script_location")
-    except (configparser.NoSectionError, configparser.NoOptionError):
+    except (NoSectionError, NoOptionError):
         return None
 
     script_location = script_location.removeprefix("./")
@@ -49,35 +49,35 @@ def extract_revision_info(filepath):
     """Parse a migration file to extract revision and down_revision from module-level assignments."""
     with open(filepath) as f:
         try:
-            tree = ast.parse(f.read())
+            tree = parse(f.read())
         except SyntaxError:
             return None
 
     revision = None
     down_revision = None
 
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.Assign):
+    for node in iter_child_nodes(tree):
+        if not isinstance(node, Assign):
             continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+        if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
             continue
 
         name = node.targets[0].id
         if name == "revision":
-            if isinstance(node.value, ast.Constant) and isinstance(
+            if isinstance(node.value, Constant) and isinstance(
                 node.value.value, str
             ):
                 revision = node.value.value
         elif name == "down_revision":
-            if isinstance(node.value, ast.Constant):
+            if isinstance(node.value, Constant):
                 if isinstance(node.value.value, str):
                     down_revision = node.value.value
                 elif node.value.value is None:
                     down_revision = None
-            elif isinstance(node.value, ast.Tuple):
+            elif isinstance(node.value, Tuple):
                 values = []
                 for elt in node.value.elts:
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    if isinstance(elt, Constant) and isinstance(elt.value, str):
                         values.append(elt.value)
                 down_revision = tuple(values)
 

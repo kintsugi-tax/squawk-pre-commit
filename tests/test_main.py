@@ -3,12 +3,12 @@
 import textwrap
 from unittest.mock import patch
 
-import pytest
+from pytest import fixture
 
 from squawk_alembic.hook import main
 
 
-@pytest.fixture()
+@fixture()
 def repo(tmp_path, monkeypatch):
     """Set up a fake repo with alembic config and a versions directory."""
     monkeypatch.chdir(tmp_path)

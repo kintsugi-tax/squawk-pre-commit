@@ -1,11 +1,11 @@
 """Tests for alembic.ini auto-detection."""
 
-import pytest
+from pytest import fixture
 
 from squawk_alembic.hook import find_migrations_path
 
 
-@pytest.fixture()
+@fixture()
 def repo(tmp_path, monkeypatch):
     """Set up a fake repo directory and chdir into it."""
     monkeypatch.chdir(tmp_path)

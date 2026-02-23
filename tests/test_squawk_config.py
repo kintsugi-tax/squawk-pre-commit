@@ -3,9 +3,9 @@
 import shutil
 import subprocess
 
-import pytest
+from pytest import fixture, mark
 
-pytestmark = pytest.mark.skipif(
+pytestmark = mark.skipif(
     shutil.which("squawk") is None, reason="squawk not installed"
 )
 
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
 SQL = "ALTER TABLE foo ADD COLUMN bar text;\n"
 
 
-@pytest.fixture()
+@fixture()
 def sql_file(tmp_path):
     path = tmp_path / "migration.sql"
     path.write_text(SQL)
