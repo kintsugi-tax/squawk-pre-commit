@@ -30,12 +30,21 @@ def make_result(returncode=0, stdout="", stderr=""):
     )()
 
 
-def fake_subprocess(alembic_result=None, squawk_result=None):
+def fake_subprocess(
+    alembic_result=None,
+    squawk_result=None,
+    git_exists_on_branch=False,
+    git_branch_valid=True,
+):
     """Return a side_effect function that dispatches based on the command."""
     alembic_res = alembic_result or make_result(stdout="CREATE TABLE foo (id int);\n")
     squawk_res = squawk_result or make_result()
 
     def side_effect(cmd, **kwargs):
+        if cmd[0] == "git":
+            if "rev-parse" in cmd:
+                return make_result(returncode=0 if git_branch_valid else 1)
+            return make_result(returncode=0 if git_exists_on_branch else 1)
         if cmd[0] == "alembic":
             return alembic_res
         if cmd[0] == "squawk":
@@ -50,10 +59,12 @@ def test_no_files(repo):
         assert main() == 0
 
 
-def test_no_alembic_ini(tmp_path, monkeypatch):
+def test_no_alembic_ini(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     with patch("sys.argv", ["squawk-alembic", "some_file.py"]):
-        assert main() == 0
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "could not find alembic.ini" in captured.err
 
 
 def test_file_outside_migrations_skipped(repo):
@@ -212,3 +223,108 @@ def test_first_migration_uses_base(repo):
         assert main() == 0
         alembic_call = mock_run.call_args_list[0][0][0]
         assert "base:first001" in alembic_call
+
+
+def test_diff_branch_skips_existing_file(repo):
+    path = write_migration(
+        repo,
+        "008_existing.py",
+        """
+        revision = 'exists01'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(git_exists_on_branch=True),
+        ) as mock_run,
+    ):
+        assert main() == 0
+        # git rev-parse (validation) + git cat-file (exists check), no alembic or squawk
+        assert mock_run.call_count == 2
+        assert mock_run.call_args_list[0][0][0][0] == "git"
+        assert mock_run.call_args_list[1][0][0][0] == "git"
+
+
+def test_diff_branch_lints_new_file(repo):
+    path = write_migration(
+        repo,
+        "009_new.py",
+        """
+        revision = 'new001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(git_exists_on_branch=False),
+        ) as mock_run,
+    ):
+        assert main() == 0
+        # git rev-parse + git cat-file + alembic + squawk = 4 calls
+        assert mock_run.call_count == 4
+
+
+def test_diff_branch_nonexistent_branch_errors(repo, capsys):
+    path = write_migration(
+        repo,
+        "011_nonexistent.py",
+        """
+        revision = 'non001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "nonexistent", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(git_branch_valid=False),
+        ) as mock_run,
+    ):
+        assert main() == 1
+        # Only the git rev-parse validation call, then early exit
+        assert mock_run.call_count == 1
+    captured = capsys.readouterr()
+    assert "not found in git" in captured.err
+
+
+def test_without_diff_branch_lints_all(repo):
+    path = write_migration(
+        repo,
+        "010_all.py",
+        """
+        revision = 'all001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", path]),
+        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
+    ):
+        assert main() == 0
+        # No git call, just alembic + squawk = 2 calls
+        assert mock_run.call_count == 2

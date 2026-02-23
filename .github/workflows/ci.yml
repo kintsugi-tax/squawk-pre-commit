@@ -32,5 +32,20 @@ jobs:
       - name: Run pre-commit hooks
         run: poetry run pre-commit run --all-files
 
+      - name: Check version consistency
+        run: |
+          PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/' || true)
+          INIT_VERSION=$(grep '^__version__ = ' squawk_alembic/__init__.py | sed 's/__version__ = "\(.*\)"/\1/' || true)
+          if [ -z "$PYPROJECT_VERSION" ] || [ -z "$INIT_VERSION" ]; then
+            echo "::error::Could not parse version from pyproject.toml or __init__.py"
+            exit 1
+          fi
+          if [ "$PYPROJECT_VERSION" != "$INIT_VERSION" ]; then
+            echo "::error::Version mismatch: pyproject.toml ($PYPROJECT_VERSION) != __init__.py ($INIT_VERSION)"
+            echo "Run 'make bump VERSION=x.y.z' to update both files."
+            exit 1
+          fi
+          echo "Versions match: $PYPROJECT_VERSION"
+
       - name: Run tests
         run: poetry run pytest tests/ -v
