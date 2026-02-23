@@ -1,0 +1,7 @@
+- id: squawk-alembic
+  name: squawk (alembic migrations)
+  description: "Lint SQL extracted from Alembic migrations with squawk"
+  entry: squawk-alembic
+  language: python
+  types: [python]
+  require_serial: true

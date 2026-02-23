@@ -1,0 +1,54 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "squawk-alembic"
+version = "0.1.0"
+description = "Pre-commit hook to lint Alembic migration SQL with squawk"
+packages = [{include = "squawk_alembic"}]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+squawk-cli = "*"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "*"
+pytest = "*"
+ruff = "*"
+pyrefly = "*"
+
+[tool.poetry.scripts]
+squawk-alembic = "squawk_alembic.hook:main"
+
+[tool.ruff]
+exclude = [".venv"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+
+[tool.ruff.lint]
+extend-select = ["I", "F"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["squawk_alembic"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["E501"]
+
+[tool.pyrefly]
+project-excludes = [
+    "**/__pycache__",
+    "**/.*",
+]
+python-platform = "linux"
+python-version = "3.12.0"
+infer-with-first-use = false
+search-path = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
