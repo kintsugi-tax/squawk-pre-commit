@@ -129,7 +129,7 @@ def test_squawk_failure(repo, capsys):
     assert "some squawk warning" in captured.out
 
 
-def test_alembic_failure_skips_file(repo, capsys):
+def test_alembic_failure_fails_run(repo, capsys):
     path = write_migration(
         repo,
         "004_alembic_fail.py",
@@ -152,7 +152,7 @@ def test_alembic_failure_skips_file(repo, capsys):
             ),
         ),
     ):
-        assert main() == 0
+        assert main() == 1
     captured = capsys.readouterr()
     assert "alembic upgrade --sql failed" in captured.err
 
@@ -171,11 +171,17 @@ def test_missing_alembic_binary(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
+
+    def alembic_not_found(cmd, **kwargs):
+        if cmd[0] == "alembic":
+            raise FileNotFoundError
+        raise ValueError(f"unexpected command: {cmd}")
+
     with (
         patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=FileNotFoundError),
+        patch("subprocess.run", side_effect=alembic_not_found),
     ):
-        assert main() == 0
+        assert main() == 1
     captured = capsys.readouterr()
     assert "alembic not found" in captured.err
 
@@ -305,6 +311,53 @@ def test_diff_branch_nonexistent_branch_errors(repo, capsys):
         assert mock_run.call_count == 1
     captured = capsys.readouterr()
     assert "not found in git" in captured.err
+
+
+def test_diff_branch_traversal_rejected(repo, capsys):
+    path = write_migration(
+        repo,
+        "013_traversal.py",
+        """
+        revision = 'trv001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "refs/../main", path]),
+        patch("subprocess.run") as mock_run,
+    ):
+        assert main() == 1
+        mock_run.assert_not_called()
+    captured = capsys.readouterr()
+    assert "invalid branch name" in captured.err
+
+
+def test_diff_branch_missing_git_binary(repo, capsys):
+    path = write_migration(
+        repo,
+        "014_no_git.py",
+        """
+        revision = 'git001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
+        patch("subprocess.run", side_effect=FileNotFoundError),
+    ):
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "git not found" in captured.err
 
 
 def test_without_diff_branch_lints_all(repo):

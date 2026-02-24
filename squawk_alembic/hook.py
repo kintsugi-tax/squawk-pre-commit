@@ -10,7 +10,7 @@ from ast import Assign, Constant, Name, Tuple, iter_child_nodes, parse
 from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
 
-_BRANCH_RE = re.compile(r"^[a-zA-Z0-9._/\-]+$")
+_BRANCH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$")
 
 
 def find_migrations_path():
@@ -90,8 +90,16 @@ def extract_revision_info(filepath):
     )
 
 
+class GenerateSqlError(Exception):
+    """Raised when alembic upgrade --sql fails."""
+
+
 def generate_sql(filepath):
-    """Run alembic upgrade --sql to generate the complete DDL for a migration."""
+    """Run alembic upgrade --sql to generate the complete DDL for a migration.
+
+    Returns the SQL string, or None if the file should be skipped (merge migration,
+    unparseable revision). Raises GenerateSqlError if alembic fails.
+    """
     info = extract_revision_info(filepath)
     if info is None:
         return None
@@ -114,34 +122,34 @@ def generate_sql(filepath):
             env=env,
         )
     except FileNotFoundError:
-        print(
-            "squawk-alembic: alembic not found. Ensure alembic is installed in your environment.",
-            file=sys.stderr,
+        raise GenerateSqlError(
+            "squawk-alembic: alembic not found. Ensure alembic is installed in your environment."
         )
-        return None
 
     if result.returncode != 0:
-        print(
-            f"squawk-alembic: alembic upgrade --sql failed for {filepath}:\n{result.stderr}",
-            file=sys.stderr,
+        raise GenerateSqlError(
+            f"squawk-alembic: alembic upgrade --sql failed for {filepath}:\n{result.stderr}"
         )
-        return None
 
     return result.stdout
 
 
 def validate_branch(branch):
     """Validate that a branch name is safe and exists in git."""
-    if not _BRANCH_RE.match(branch):
+    if not _BRANCH_RE.match(branch) or ".." in branch:
         print(
             f"squawk-alembic: invalid branch name: {branch!r}",
             file=sys.stderr,
         )
         return False
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", branch],
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch],
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        print("squawk-alembic: git not found", file=sys.stderr)
+        return False
     if result.returncode != 0:
         print(
             f"squawk-alembic: branch '{branch}' not found in git",
@@ -195,7 +203,13 @@ def main():
         if args.diff_branch and file_exists_on_branch(filepath, args.diff_branch):
             continue
 
-        sql = generate_sql(filepath)
+        try:
+            sql = generate_sql(filepath)
+        except GenerateSqlError as exc:
+            print(str(exc), file=sys.stderr)
+            exit_code = 1
+            continue
+
         if not sql:
             continue
 

@@ -1,4 +1,4 @@
-# Kintsugi Squawk
+# squawk-pre-commit
 
 A [pre-commit](https://pre-commit.com/) hook that lints SQL in [Alembic](https://alembic.sqlalchemy.org/) migrations using [squawk](https://squawkhq.com/), a PostgreSQL migration linter.
 
@@ -59,6 +59,13 @@ When pre-commit runs, the hook:
 
 Merge migrations (where `down_revision` is a tuple) are skipped since they produce no DDL.
 
+## Known Limitations
+
+* The hook runs `alembic upgrade --sql`, which executes your project's `env.py` in offline mode. No database connection is made, but the Python code in `env.py` does run.
+* If `DATABASE_URL` is not set, the hook provides a dummy fallback (`postgresql://localhost/lint`) so alembic's offline mode can generate SQL without a real connection string.
+* If `alembic upgrade --sql` fails for a migration (e.g. due to missing dependencies or env configuration), the hook prints the error to stderr and fails the run.
+* Merge migrations (where `down_revision` is a tuple) produce no DDL and are always skipped.
+
 ## Squawk Configuration
 
 Squawk reads its configuration from `.squawk.toml` in the consumer repo root. See the [squawk docs](https://squawkhq.com/docs/configuration/) for available options.
@@ -67,7 +74,7 @@ Squawk reads its configuration from `.squawk.toml` in the consumer repo root. Se
 
 **Prerequisites:**
 
-* Python (version 3.12)
+* Python 3.10+ (3.12 recommended for development)
 * Poetry
 * squawk-cli (`pip install squawk-cli`)
 
@@ -77,6 +84,8 @@ Squawk reads its configuration from `.squawk.toml` in the consumer repo root. Se
 2. Activate the virtual environment: `source .venv/bin/activate`
 3. Install the pre-commit hooks: `pre-commit install`
 4. Run tests: `poetry run pytest tests/ -v`
+
+Some integration tests in `tests/test_squawk_config.py` require `squawk` on PATH and are automatically skipped if it is not installed.
 
 To test the hook against a consumer repo locally:
 

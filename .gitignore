@@ -12,6 +12,9 @@ dist/
 # Virtual environments
 .venv/
 
+# Linting
+.ruff_cache/
+
 # Test / coverage
 .pytest_cache/
 .coverage

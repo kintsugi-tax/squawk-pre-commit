@@ -30,7 +30,7 @@ repos:
       hooks:
           - id: poetry-check
     - repo: https://github.com/facebook/pyrefly-pre-commit
-      rev: 0.0.1
+      rev: 0.53.0
       hooks:
         - id: pyrefly-typecheck-system
           name: Pyrefly (type checking)
