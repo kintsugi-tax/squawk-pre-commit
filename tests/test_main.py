@@ -99,6 +99,7 @@ def test_squawk_success(repo):
         assert "def456:abc123" in alembic_call
         squawk_call = mock_run.call_args_list[1][0][0]
         assert squawk_call[0] == "squawk"
+        assert "--assume-in-transaction" in squawk_call
 
 
 def test_squawk_failure(repo, capsys):
