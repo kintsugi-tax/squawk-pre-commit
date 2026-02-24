@@ -64,9 +64,7 @@ def extract_revision_info(filepath):
 
         name = node.targets[0].id
         if name == "revision":
-            if isinstance(node.value, Constant) and isinstance(
-                node.value.value, str
-            ):
+            if isinstance(node.value, Constant) and isinstance(node.value.value, str):
                 revision = node.value.value
         elif name == "down_revision":
             if isinstance(node.value, Constant):

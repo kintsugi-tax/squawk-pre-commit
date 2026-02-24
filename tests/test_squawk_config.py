@@ -5,9 +5,7 @@ import subprocess
 
 from pytest import fixture, mark
 
-pytestmark = mark.skipif(
-    shutil.which("squawk") is None, reason="squawk not installed"
-)
+pytestmark = mark.skipif(shutil.which("squawk") is None, reason="squawk not installed")
 
 
 SQL = "ALTER TABLE foo ADD COLUMN bar text;\n"
