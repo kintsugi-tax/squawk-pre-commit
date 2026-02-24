@@ -64,7 +64,6 @@ Merge migrations (where `down_revision` is a tuple) are skipped since they produ
 * The hook runs `alembic upgrade --sql`, which executes your project's `env.py` in offline mode. No database connection is made, but the Python code in `env.py` does run.
 * If `DATABASE_URL` is not set, the hook provides a dummy fallback (`postgresql://localhost/lint`) so alembic's offline mode can generate SQL without a real connection string.
 * If `alembic upgrade --sql` fails for a migration (e.g. due to missing dependencies or env configuration), the hook prints the error to stderr and fails the run.
-* Merge migrations (where `down_revision` is a tuple) produce no DDL and are always skipped.
 
 ## Squawk Configuration
 

@@ -121,10 +121,10 @@ def generate_sql(filepath):
             text=True,
             env=env,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise GenerateSqlError(
             "squawk-alembic: alembic not found. Ensure alembic is installed in your environment."
-        )
+        ) from exc
 
     if result.returncode != 0:
         raise GenerateSqlError(
@@ -161,10 +161,13 @@ def validate_branch(branch):
 
 def file_exists_on_branch(filepath, branch):
     """Check if a file exists on the given git branch."""
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{branch}:{filepath}"],
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{branch}:{filepath}"],
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return False
     return result.returncode == 0
 
 

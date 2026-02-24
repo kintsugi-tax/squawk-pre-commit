@@ -25,5 +25,8 @@ htmlcov/
 .vscode/
 .DS_Store
 
+# Environment
+.env
+
 # Python version
 .python-version
