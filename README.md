@@ -48,6 +48,12 @@ repos:
 
 With this flag, the hook checks whether each migration file exists on the specified branch. Files that already exist are skipped. New files (not yet on the branch) are linted. This makes `pre-commit run --all-files` safe to run in repos where older migrations would fail linting.
 
+The value must be a ref that resolves locally via `git rev-parse --verify`. In CI environments with shallow checkouts or no local tracking branch, use the remote form:
+
+```yaml
+            args: [--diff-branch, origin/main]
+```
+
 ## How It Works
 
 When pre-commit runs, the hook:
