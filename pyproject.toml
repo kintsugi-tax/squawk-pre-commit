@@ -4,13 +4,29 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "squawk-alembic"
-version = "0.2.0"
+version = "0.3.0"
 description = "Pre-commit hook to lint Alembic migration SQL with squawk"
 packages = [{include = "squawk_alembic"}]
+readme = "README.md"
+homepage = "https://www.trykintsugi.com/"
+repository = "https://github.com/kintsugi-tax/squawk-pre-commit"
+authors = ["Kintsugi <engineering@trykintsugi.com>"]
+license = "MIT"
+keywords = ["pre-commit", "squawk", "alembic", "postgresql", "migration", "linter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Database",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
-squawk-cli = "*"
+squawk-cli = ">=2.0"
 
 [tool.poetry.group.dev.dependencies]
 alembic = "*"

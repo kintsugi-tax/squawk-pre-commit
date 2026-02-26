@@ -1,12 +1,16 @@
 """Pre-commit hook that generates DDL via alembic upgrade --sql and lints with squawk."""
 
-import ast
-import configparser
+import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
+from ast import Assign, Constant, Name, Tuple, iter_child_nodes, parse
+from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
+
+_BRANCH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$")
 
 
 def find_migrations_path():
@@ -15,12 +19,12 @@ def find_migrations_path():
     if not config_path.exists():
         return None
 
-    config = configparser.ConfigParser()
+    config = ConfigParser()
     config.read(config_path)
 
     try:
         script_location = config.get("alembic", "script_location")
-    except (configparser.NoSectionError, configparser.NoOptionError):
+    except (NoSectionError, NoOptionError):
         return None
 
     script_location = script_location.removeprefix("./")
@@ -45,35 +49,33 @@ def extract_revision_info(filepath):
     """Parse a migration file to extract revision and down_revision from module-level assignments."""
     with open(filepath) as f:
         try:
-            tree = ast.parse(f.read())
+            tree = parse(f.read())
         except SyntaxError:
             return None
 
     revision = None
     down_revision = None
 
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.Assign):
+    for node in iter_child_nodes(tree):
+        if not isinstance(node, Assign):
             continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+        if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
             continue
 
         name = node.targets[0].id
         if name == "revision":
-            if isinstance(node.value, ast.Constant) and isinstance(
-                node.value.value, str
-            ):
+            if isinstance(node.value, Constant) and isinstance(node.value.value, str):
                 revision = node.value.value
         elif name == "down_revision":
-            if isinstance(node.value, ast.Constant):
+            if isinstance(node.value, Constant):
                 if isinstance(node.value.value, str):
                     down_revision = node.value.value
                 elif node.value.value is None:
                     down_revision = None
-            elif isinstance(node.value, ast.Tuple):
+            elif isinstance(node.value, Tuple):
                 values = []
                 for elt in node.value.elts:
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    if isinstance(elt, Constant) and isinstance(elt.value, str):
                         values.append(elt.value)
                 down_revision = tuple(values)
 
@@ -86,8 +88,16 @@ def extract_revision_info(filepath):
     )
 
 
+class GenerateSqlError(Exception):
+    """Raised when alembic upgrade --sql fails."""
+
+
 def generate_sql(filepath):
-    """Run alembic upgrade --sql to generate the complete DDL for a migration."""
+    """Run alembic upgrade --sql to generate the complete DDL for a migration.
+
+    Returns the SQL string, or None if the file should be skipped (merge migration,
+    unparseable revision). Raises GenerateSqlError if alembic fails.
+    """
     info = extract_revision_info(filepath)
     if info is None:
         return None
@@ -109,107 +119,71 @@ def generate_sql(filepath):
             text=True,
             env=env,
         )
-    except FileNotFoundError:
-        print(
-            "squawk-alembic: alembic not found. Ensure alembic is installed in your environment.",
-            file=sys.stderr,
-        )
-        return None
+    except FileNotFoundError as exc:
+        raise GenerateSqlError(
+            "squawk-alembic: alembic not found. Ensure alembic is installed in your environment."
+        ) from exc
 
     if result.returncode != 0:
-        print(
-            f"squawk-alembic: alembic upgrade --sql failed for {filepath}:\n{result.stderr}",
-            file=sys.stderr,
+        raise GenerateSqlError(
+            f"squawk-alembic: alembic upgrade --sql failed for {filepath}:\n{result.stderr}"
         )
-        return None
 
     return result.stdout
 
 
-def check_autocommit_blocks(filepath):
-    """Check that CONCURRENTLY operations are inside autocommit blocks."""
-    with open(filepath) as f:
-        try:
-            tree = ast.parse(f.read())
-        except SyntaxError:
-            return []
-
-    checker = _AutocommitChecker()
-    checker.visit(tree)
-    return checker.warnings
-
-
-def _has_concurrent_kwarg(node):
-    """Check if an AST Call node has postgresql_concurrently=True."""
-    for kw in node.keywords:
-        if (
-            kw.arg == "postgresql_concurrently"
-            and isinstance(kw.value, ast.Constant)
-            and kw.value.value is True
-        ):
-            return True
-    return False
-
-
-class _AutocommitChecker(ast.NodeVisitor):
-    def __init__(self):
-        self.warnings = []
-        self._in_autocommit = False
-
-    def visit_With(self, node):
-        is_autocommit = any(
-            isinstance(item.context_expr, ast.Call)
-            and isinstance(item.context_expr.func, ast.Attribute)
-            and item.context_expr.func.attr == "autocommit_block"
-            for item in node.items
+def validate_branch(branch):
+    """Validate that a branch name is safe and exists in git."""
+    if not _BRANCH_RE.match(branch) or ".." in branch:
+        print(
+            f"squawk-alembic: invalid branch name: {branch!r}",
+            file=sys.stderr,
         )
-        if is_autocommit:
-            old = self._in_autocommit
-            self._in_autocommit = True
-            self.generic_visit(node)
-            self._in_autocommit = old
-        else:
-            self.generic_visit(node)
-
-    def visit_Call(self, node):
-        if (
-            isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "op"
-        ):
-            # op.execute("...CONCURRENTLY...")
-            if node.func.attr == "execute" and node.args:
-                sql = _extract_string(node.args[0])
-                if sql and "concurrently" in sql.lower() and not self._in_autocommit:
-                    self.warnings.append(node.lineno)
-
-            # op.create_index(..., postgresql_concurrently=True)
-            # op.drop_index(..., postgresql_concurrently=True)
-            if node.func.attr in ("create_index", "drop_index"):
-                if _has_concurrent_kwarg(node) and not self._in_autocommit:
-                    self.warnings.append(node.lineno)
-
-        self.generic_visit(node)
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch],
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        print("squawk-alembic: git not found", file=sys.stderr)
+        return False
+    if result.returncode != 0:
+        print(
+            f"squawk-alembic: branch '{branch}' not found in git",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
-def _extract_string(node):
-    """Extract a string value from an AST node, handling common wrappers."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-
-    if isinstance(node, ast.Call) and node.args:
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "text":
-            return _extract_string(node.args[0])
-        if isinstance(node.func, ast.Name) and node.func.id == "text":
-            return _extract_string(node.args[0])
-
-    return None
+def file_exists_on_branch(filepath, branch):
+    """Check if a file exists on the given git branch."""
+    try:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{branch}:{filepath}"],
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
 
 
 def main():
-    files = sys.argv[1:]
-    if not files:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--diff-branch",
+        default=None,
+        help="Only lint migration files that don't exist on this branch.",
+    )
+    parser.add_argument("files", nargs="*")
+    args = parser.parse_args()
+
+    if not args.files:
         return 0
+
+    if args.diff_branch and not validate_branch(args.diff_branch):
+        return 1
 
     migrations_path = find_migrations_path()
     if not migrations_path:
@@ -217,24 +191,26 @@ def main():
             "squawk-alembic: could not find alembic.ini or parse script_location",
             file=sys.stderr,
         )
-        return 0
+        return 1
 
     exit_code = 0
 
-    for filepath in files:
+    for filepath in args.files:
         try:
             Path(filepath).relative_to(migrations_path)
         except ValueError:
             continue
 
-        autocommit_warnings = check_autocommit_blocks(filepath)
-        for lineno in autocommit_warnings:
-            print(
-                f"{filepath}:{lineno}: CONCURRENTLY operation outside autocommit_block()"
-            )
-            exit_code = 1
+        if args.diff_branch and file_exists_on_branch(filepath, args.diff_branch):
+            continue
 
-        sql = generate_sql(filepath)
+        try:
+            sql = generate_sql(filepath)
+        except GenerateSqlError as exc:
+            print(str(exc), file=sys.stderr)
+            exit_code = 1
+            continue
+
         if not sql:
             continue
 
@@ -244,7 +220,7 @@ def main():
 
         try:
             result = subprocess.run(
-                ["squawk", tmp_path],
+                ["squawk", "--assume-in-transaction", tmp_path],
                 capture_output=True,
                 text=True,
             )

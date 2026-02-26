@@ -2,12 +2,12 @@
 
 import textwrap
 
-import pytest
+from pytest import fixture
 
 from squawk_alembic.hook import extract_revision_info
 
 
-@pytest.fixture()
+@fixture()
 def migration_file(tmp_path):
     """Write a migration file and return its path."""
 
