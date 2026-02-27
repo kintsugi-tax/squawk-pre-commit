@@ -47,6 +47,18 @@ jobs:
           fi
           echo "Versions match: $PYPROJECT_VERSION"
 
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main --depth=1
+            MAIN_VERSION=$(git show origin/main:pyproject.toml | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || true)
+            if [ -z "$MAIN_VERSION" ]; then
+              echo "::warning::Could not determine version on main, skipping version bump check"
+            elif [ "$PYPROJECT_VERSION" = "$MAIN_VERSION" ]; then
+              echo "::error::Version $PYPROJECT_VERSION is the same as on main. Please bump the version."
+              echo "Run 'make bump VERSION=x.y.z' to update both files."
+              exit 1
+            fi
+          fi
+
       - name: Run tests
         run: poetry run pytest tests/ -v
 
