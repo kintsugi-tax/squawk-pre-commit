@@ -133,7 +133,11 @@ def generate_sql(filepath):
 
 
 def validate_branch(branch):
-    """Validate that a branch name is safe and exists in git."""
+    """Validate that a branch name is safe and exists in git.
+
+    For remote refs (origin/...), attempts a shallow fetch when the ref is
+    missing locally — common in CI shallow clones.
+    """
     if not _BRANCH_RE.match(branch) or ".." in branch:
         print(
             f"squawk-alembic: invalid branch name: {branch!r}",
@@ -148,13 +152,23 @@ def validate_branch(branch):
     except FileNotFoundError:
         print("squawk-alembic: git not found", file=sys.stderr)
         return False
-    if result.returncode != 0:
-        print(
-            f"squawk-alembic: branch '{branch}' not found in git",
-            file=sys.stderr,
+    if result.returncode == 0:
+        return True
+
+    if branch.startswith("origin/"):
+        remote_branch = branch.removeprefix("origin/")
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", remote_branch, "--depth=1"],
+            capture_output=True,
         )
-        return False
-    return True
+        if fetch.returncode == 0:
+            return True
+
+    print(
+        f"squawk-alembic: branch '{branch}' not found in git",
+        file=sys.stderr,
+    )
+    return False
 
 
 def file_exists_on_branch(filepath, branch):

@@ -35,6 +35,7 @@ def fake_subprocess(
     squawk_result=None,
     git_exists_on_branch=False,
     git_branch_valid=True,
+    git_fetch_succeeds=False,
 ):
     """Return a side_effect function that dispatches based on the command."""
     alembic_res = alembic_result or make_result(stdout="CREATE TABLE foo (id int);\n")
@@ -44,7 +45,11 @@ def fake_subprocess(
         if cmd[0] == "git":
             if "rev-parse" in cmd:
                 return make_result(returncode=0 if git_branch_valid else 1)
-            return make_result(returncode=0 if git_exists_on_branch else 1)
+            if "fetch" in cmd:
+                return make_result(returncode=0 if git_fetch_succeeds else 1)
+            if "cat-file" in cmd:
+                return make_result(returncode=0 if git_exists_on_branch else 1)
+            return make_result(returncode=1)
         if cmd[0] == "alembic":
             return alembic_res
         if cmd[0] == "squawk":
@@ -381,3 +386,98 @@ def test_without_diff_branch_lints_all(repo):
         assert main() == 0
         # No git call, just alembic + squawk = 2 calls
         assert mock_run.call_count == 2
+
+
+def test_origin_branch_shallow_fetch_succeeds(repo):
+    """In CI shallow clones, origin/main may not exist locally; the hook should fetch it."""
+    path = write_migration(
+        repo,
+        "016_shallow.py",
+        """
+        revision = 'sha001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "origin/main", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(
+                git_branch_valid=False,
+                git_fetch_succeeds=True,
+                git_exists_on_branch=False,
+            ),
+        ) as mock_run,
+    ):
+        assert main() == 0
+        # git rev-parse (fail) + git fetch + git cat-file + alembic + squawk = 5 calls
+        assert mock_run.call_count == 5
+        assert mock_run.call_args_list[0][0][0][0] == "git"
+        assert "fetch" in mock_run.call_args_list[1][0][0]
+        assert "cat-file" in mock_run.call_args_list[2][0][0]
+
+
+def test_origin_branch_shallow_fetch_fails(repo, capsys):
+    """When both rev-parse and fetch fail, the hook should error."""
+    path = write_migration(
+        repo,
+        "017_fetch_fail.py",
+        """
+        revision = 'ff001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "origin/main", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(
+                git_branch_valid=False,
+                git_fetch_succeeds=False,
+            ),
+        ) as mock_run,
+    ):
+        assert main() == 1
+        # git rev-parse (fail) + git fetch (fail) = 2 calls
+        assert mock_run.call_count == 2
+    captured = capsys.readouterr()
+    assert "not found in git" in captured.err
+
+
+def test_non_origin_branch_no_fetch_attempted(repo, capsys):
+    """Non-origin branches should not trigger a fetch attempt."""
+    path = write_migration(
+        repo,
+        "018_no_fetch.py",
+        """
+        revision = 'nf001'
+        down_revision = 'prev001'
+
+        from alembic import op
+
+        def upgrade():
+            op.execute("CREATE TABLE foo (id int)")
+        """,
+    )
+    with (
+        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
+        patch(
+            "subprocess.run",
+            side_effect=fake_subprocess(git_branch_valid=False),
+        ) as mock_run,
+    ):
+        assert main() == 1
+        # Only git rev-parse (fail), no fetch attempted
+        assert mock_run.call_count == 1
+    captured = capsys.readouterr()
+    assert "not found in git" in captured.err
