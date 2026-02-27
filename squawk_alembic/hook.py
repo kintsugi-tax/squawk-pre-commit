@@ -220,7 +220,7 @@ def main():
 
         try:
             result = subprocess.run(
-                ["squawk", "--assume-in-transaction", tmp_path],
+                ["squawk", tmp_path],
                 capture_output=True,
                 text=True,
             )
