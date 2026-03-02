@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from ast import Assign, Constant, Name, Tuple, iter_child_nodes, parse
+from ast import AnnAssign, Assign, Constant, Name, Tuple, iter_child_nodes, parse
 from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
 
@@ -57,12 +57,16 @@ def extract_revision_info(filepath):
     down_revision = None
 
     for node in iter_child_nodes(tree):
-        if not isinstance(node, Assign):
+        if isinstance(node, AnnAssign):
+            if not isinstance(node.target, Name) or node.value is None:
+                continue
+            name = node.target.id
+        elif isinstance(node, Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
+                continue
+            name = node.targets[0].id
+        else:
             continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
-            continue
-
-        name = node.targets[0].id
         if name == "revision":
             if isinstance(node.value, Constant) and isinstance(node.value.value, str):
                 revision = node.value.value
