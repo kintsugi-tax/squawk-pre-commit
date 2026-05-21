@@ -80,7 +80,9 @@ def test_squawk_failure(mock_run, repo, capsys, monkeypatch):
 
 
 @patch("subprocess.run")
-def test_squawk_failure_replaces_tmp_path_in_output(mock_run, repo, capsys, monkeypatch):
+def test_squawk_failure_replaces_tmp_path_in_output(
+    mock_run, repo, capsys, monkeypatch
+):
     """Squawk output should show the original migration path, not the temp file path."""
     path = write_migration(
         repo,
@@ -304,7 +306,9 @@ def test_multiple_files_all_pass(mock_run, repo, monkeypatch):
 
 
 @patch("subprocess.run")
-def test_multiple_files_first_fails_second_still_runs(mock_run, repo, capsys, monkeypatch):
+def test_multiple_files_first_fails_second_still_runs(
+    mock_run, repo, capsys, monkeypatch
+):
     """A failure in one file should not prevent linting of subsequent files."""
     path1 = write_migration(
         repo,
@@ -416,7 +420,9 @@ def test_diff_branch_nonexistent_branch_errors(mock_run, repo, capsys, monkeypat
         """,
     )
     mock_run.side_effect = fake_subprocess(git_branch_valid=False)
-    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "nonexistent", path])
+    monkeypatch.setattr(
+        sys, "argv", ["squawk-alembic", "--diff-branch", "nonexistent", path]
+    )
     assert main() == 1
     # Only the git rev-parse validation call, then early exit
     assert mock_run.call_count == 1
@@ -439,7 +445,9 @@ def test_diff_branch_traversal_rejected(mock_run, repo, capsys, monkeypatch):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "refs/../main", path])
+    monkeypatch.setattr(
+        sys, "argv", ["squawk-alembic", "--diff-branch", "refs/../main", path]
+    )
     assert main() == 1
     mock_run.assert_not_called()
     captured = capsys.readouterr()
@@ -511,7 +519,9 @@ def test_origin_branch_shallow_fetch_succeeds(mock_run, repo, monkeypatch):
         git_fetch_succeeds=True,
         git_exists_on_branch=False,
     )
-    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path])
+    monkeypatch.setattr(
+        sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path]
+    )
     assert main() == 0
     # git rev-parse (fail) + git fetch + git cat-file + alembic + squawk = 5 calls
     assert mock_run.call_count == 5
@@ -540,7 +550,9 @@ def test_origin_branch_shallow_fetch_fails(mock_run, repo, capsys, monkeypatch):
         git_branch_valid=False,
         git_fetch_succeeds=False,
     )
-    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path])
+    monkeypatch.setattr(
+        sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path]
+    )
     assert main() == 1
     # git rev-parse (fail) + git fetch (fail) = 2 calls
     assert mock_run.call_count == 2
