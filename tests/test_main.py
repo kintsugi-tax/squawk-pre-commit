@@ -165,12 +165,15 @@ def test_unreadable_migration_file(repo, capsys):
     )
     import os
 
-    os.chmod(repo / "migrations" / "versions" / "026_unreadable.py", 0o000)
-    with patch("sys.argv", ["squawk-alembic", path]):
-        assert main() == 1
-    os.chmod(repo / "migrations" / "versions" / "026_unreadable.py", 0o644)
-    captured = capsys.readouterr()
-    assert "cannot read migration file" in captured.err
+    unreadable = repo / "migrations" / "versions" / "026_unreadable.py"
+    os.chmod(unreadable, 0o000)
+    try:
+        with patch("sys.argv", ["squawk-alembic", path]):
+            assert main() == 1
+        captured = capsys.readouterr()
+        assert "cannot read migration file" in captured.err
+    finally:
+        os.chmod(unreadable, 0o644)
 
 
 def test_missing_alembic_binary(repo, capsys):
