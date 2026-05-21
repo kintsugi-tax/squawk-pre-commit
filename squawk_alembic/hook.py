@@ -1,19 +1,20 @@
 """Pre-commit hook that generates DDL via alembic upgrade --sql and lints with squawk."""
 
 import argparse
+import ast
 import os
 import re
 import subprocess
 import sys
 import tempfile
-from ast import AnnAssign, Assign, Constant, Name, Tuple, iter_child_nodes, parse
 from configparser import ConfigParser, NoOptionError, NoSectionError
+from dataclasses import dataclass
 from pathlib import Path
 
 _BRANCH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$")
 
 
-def find_migrations_path():
+def find_migrations_path() -> Path | None:
     """Auto-detect the alembic migrations versions directory from alembic.ini."""
     config_path = Path("alembic.ini")
     if not config_path.exists():
@@ -36,50 +37,50 @@ def find_migrations_path():
     return None
 
 
+@dataclass(frozen=True, slots=True)
 class RevisionInfo:
-    __slots__ = ("revision", "down_revision", "is_merge")
-
-    def __init__(self, revision, down_revision, is_merge):
-        self.revision = revision
-        self.down_revision = down_revision
-        self.is_merge = is_merge
+    revision: str
+    down_revision: str | tuple[str, ...] | None
+    is_merge: bool
 
 
-def extract_revision_info(filepath):
+def extract_revision_info(filepath: str | Path) -> RevisionInfo | None:
     """Parse a migration file to extract revision and down_revision from module-level assignments."""
     with open(filepath) as f:
         try:
-            tree = parse(f.read())
+            tree = ast.parse(f.read())
         except SyntaxError:
             return None
 
-    revision = None
-    down_revision = None
+    revision: str | None = None
+    down_revision: str | tuple[str, ...] | None = None
 
-    for node in iter_child_nodes(tree):
-        if isinstance(node, AnnAssign):
-            if not isinstance(node.target, Name) or node.value is None:
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.AnnAssign):
+            if not isinstance(node.target, ast.Name) or node.value is None:
                 continue
             name = node.target.id
-        elif isinstance(node, Assign):
-            if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
                 continue
             name = node.targets[0].id
         else:
             continue
         if name == "revision":
-            if isinstance(node.value, Constant) and isinstance(node.value.value, str):
+            if isinstance(node.value, ast.Constant) and isinstance(
+                node.value.value, str
+            ):
                 revision = node.value.value
         elif name == "down_revision":
-            if isinstance(node.value, Constant):
+            if isinstance(node.value, ast.Constant):
                 if isinstance(node.value.value, str):
                     down_revision = node.value.value
                 elif node.value.value is None:
                     down_revision = None
-            elif isinstance(node.value, Tuple):
-                values = []
+            elif isinstance(node.value, ast.Tuple):
+                values: list[str] = []
                 for elt in node.value.elts:
-                    if isinstance(elt, Constant) and isinstance(elt.value, str):
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                         values.append(elt.value)
                 down_revision = tuple(values)
 
@@ -96,7 +97,7 @@ class GenerateSqlError(Exception):
     """Raised when alembic upgrade --sql fails."""
 
 
-def generate_sql(filepath):
+def generate_sql(filepath: str | Path) -> str | None:
     """Run alembic upgrade --sql to generate the complete DDL for a migration.
 
     Returns the SQL string, or None if the file should be skipped (merge migration,
@@ -109,7 +110,7 @@ def generate_sql(filepath):
     if info.is_merge:
         return None
 
-    base = info.down_revision if info.down_revision else "base"
+    base = info.down_revision if isinstance(info.down_revision, str) else "base"
     target = f"{base}:{info.revision}"
 
     env = os.environ.copy()
@@ -136,11 +137,11 @@ def generate_sql(filepath):
     return result.stdout
 
 
-def validate_branch(branch):
+def validate_branch(branch: str) -> bool:
     """Validate that a branch name is safe and exists in git.
 
     For remote refs (origin/...), attempts a shallow fetch when the ref is
-    missing locally — common in CI shallow clones.
+    missing locally, common in CI shallow clones.
     """
     if not _BRANCH_RE.match(branch) or ".." in branch:
         print(
@@ -175,7 +176,7 @@ def validate_branch(branch):
     return False
 
 
-def file_exists_on_branch(filepath, branch):
+def file_exists_on_branch(filepath: str, branch: str) -> bool:
     """Check if a file exists on the given git branch."""
     try:
         result = subprocess.run(
@@ -187,7 +188,66 @@ def file_exists_on_branch(filepath, branch):
     return result.returncode == 0
 
 
-def main():
+class _SquawkNotFound(Exception):
+    pass
+
+
+def _lint_file(filepath: str, migrations_path: Path, diff_branch: str | None) -> int:
+    """Lint a single migration file. Returns 0 on success/skip, 1 on failure.
+
+    Raises _SquawkNotFound if the squawk binary is missing.
+    """
+    try:
+        Path(filepath).relative_to(migrations_path)
+    except ValueError:
+        return 0
+
+    if diff_branch and file_exists_on_branch(filepath, diff_branch):
+        return 0
+
+    try:
+        sql = generate_sql(filepath)
+    except GenerateSqlError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(
+            f"squawk-alembic: cannot read migration file: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not sql:
+        return 0
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql)
+        tmp_path = tmp.name
+
+    try:
+        result = subprocess.run(
+            ["squawk", tmp_path],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            output = result.stdout.replace(tmp_path, filepath)
+            error = result.stderr.replace(tmp_path, filepath)
+            if output:
+                print(output)
+            if error:
+                print(error, file=sys.stderr)
+            return 1
+    except FileNotFoundError:
+        raise _SquawkNotFound
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    return 0
+
+
+def main() -> int:
+    """CLI entrypoint. Returns 0 on success, 1 on any failure."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--diff-branch",
@@ -215,49 +275,15 @@ def main():
 
     for filepath in args.files:
         try:
-            Path(filepath).relative_to(migrations_path)
-        except ValueError:
-            continue
-
-        if args.diff_branch and file_exists_on_branch(filepath, args.diff_branch):
-            continue
-
-        try:
-            sql = generate_sql(filepath)
-        except GenerateSqlError as exc:
-            print(str(exc), file=sys.stderr)
-            exit_code = 1
-            continue
-
-        if not sql:
-            continue
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
-            tmp.write(sql)
-            tmp_path = tmp.name
-
-        try:
-            result = subprocess.run(
-                ["squawk", tmp_path],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                output = result.stdout.replace(tmp_path, filepath)
-                error = result.stderr.replace(tmp_path, filepath)
-                if output:
-                    print(output)
-                if error:
-                    print(error, file=sys.stderr)
-                exit_code = 1
-        except FileNotFoundError:
+            result = _lint_file(filepath, migrations_path, args.diff_branch)
+        except _SquawkNotFound:
             print(
                 "squawk-alembic: squawk not found. Install with: pip install squawk-cli",
                 file=sys.stderr,
             )
             return 1
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+        if result != 0:
+            exit_code = 1
 
     return exit_code
 

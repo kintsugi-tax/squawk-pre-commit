@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "squawk-alembic"
-version = "0.3.2"
+version = "0.3.3"
 description = "Pre-commit hook to lint Alembic migration SQL with squawk"
 packages = [{include = "squawk_alembic"}]
 readme = "README.md"
@@ -29,11 +29,12 @@ python = ">=3.10"
 squawk-cli = ">=2.0"
 
 [tool.poetry.group.dev.dependencies]
-alembic = "*"
-pre-commit = "*"
-pytest = "*"
-ruff = "*"
-pyrefly = "*"
+alembic = "~=1.18.4"
+pre-commit = "~=4.6.0"
+pytest = "~=9.0.3"
+ruff = "~=0.15.14"
+pyrefly = "~=1.0.0"
+pytest-cov = "~=7.1.0"
 
 [tool.poetry.scripts]
 squawk-alembic = "squawk_alembic.hook:main"

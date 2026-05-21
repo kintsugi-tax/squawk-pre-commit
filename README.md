@@ -11,7 +11,7 @@ Add the following to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
     - repo: https://github.com/kintsugi-tax/squawk-pre-commit
-      rev: v0.3.0
+      rev: v0.3.3
       hooks:
           - id: squawk-alembic
 ```
@@ -25,7 +25,7 @@ The hook depends on `squawk-cli >= 2.0`. To pin a specific squawk version (match
 ```yaml
 repos:
     - repo: https://github.com/kintsugi-tax/squawk-pre-commit
-      rev: v0.3.0
+      rev: v0.3.3
       hooks:
           - id: squawk-alembic
             additional_dependencies: ["squawk-cli==2.41.0"]
@@ -40,7 +40,7 @@ To skip migrations that already exist on a branch (useful for repos with existin
 ```yaml
 repos:
     - repo: https://github.com/kintsugi-tax/squawk-pre-commit
-      rev: v0.3.0
+      rev: v0.3.3
       hooks:
           - id: squawk-alembic
             args: [--diff-branch, main]
@@ -91,6 +91,16 @@ Squawk reads its configuration from `.squawk.toml` in the consumer repo root. Se
 4. Run tests: `poetry run pytest tests/ -v`
 
 Some integration tests in `tests/test_squawk_config.py` require `squawk` on PATH and are automatically skipped if it is not installed.
+
+**Versioning:**
+
+PRs that change package files (`squawk_alembic/`, `pyproject.toml`, `.pre-commit-hooks.yaml`) must include a version bump. CI enforces this. To bump:
+
+```bash
+make bump VERSION=0.3.3
+```
+
+This updates both `pyproject.toml` and `squawk_alembic/__init__.py`. On merge to main, CI automatically creates a git tag and GitHub release from the new version. Changes to tests, docs, or CI config do not require a version bump.
 
 To test the hook against a consumer repo locally:
 
