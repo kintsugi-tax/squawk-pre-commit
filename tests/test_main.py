@@ -1,5 +1,7 @@
 """Tests for the main hook entrypoint."""
 
+import os
+import sys
 from unittest.mock import patch
 
 from squawk_alembic.hook import main
@@ -7,27 +9,28 @@ from squawk_alembic.hook import main
 from .conftest import fake_subprocess, make_result, write_migration
 
 
-def test_no_files(repo):
-    with patch("sys.argv", ["squawk-alembic"]):
-        assert main() == 0
+def test_no_files(repo, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic"])
+    assert main() == 0
 
 
 def test_no_alembic_ini(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    with patch("sys.argv", ["squawk-alembic", "some_file.py"]):
-        assert main() == 1
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "some_file.py"])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "could not find alembic.ini" in captured.err
 
 
-def test_file_outside_migrations_skipped(repo):
+def test_file_outside_migrations_skipped(repo, monkeypatch):
     other = repo / "other.py"
     other.write_text("op.execute('DROP TABLE foo')")
-    with patch("sys.argv", ["squawk-alembic", "other.py"]):
-        assert main() == 0
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "other.py"])
+    assert main() == 0
 
 
-def test_squawk_success(repo):
+@patch("subprocess.run")
+def test_squawk_success(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "002_raw_sql.py",
@@ -41,20 +44,19 @@ def test_squawk_success(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
-    ):
-        assert main() == 0
-        assert mock_run.call_count == 2
-        alembic_call = mock_run.call_args_list[0][0][0]
-        assert alembic_call[0] == "alembic"
-        assert "def456:abc123" in alembic_call
-        squawk_call = mock_run.call_args_list[1][0][0]
-        assert squawk_call[0] == "squawk"
+    mock_run.side_effect = fake_subprocess()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 0
+    assert mock_run.call_count == 2
+    alembic_call = mock_run.call_args_list[0][0][0]
+    assert alembic_call[0] == "alembic"
+    assert "def456:abc123" in alembic_call
+    squawk_call = mock_run.call_args_list[1][0][0]
+    assert squawk_call[0] == "squawk"
 
 
-def test_squawk_failure(repo, capsys):
+@patch("subprocess.run")
+def test_squawk_failure(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "003_bad_sql.py",
@@ -68,21 +70,17 @@ def test_squawk_failure(repo, capsys):
             op.execute("ALTER TABLE foo ADD COLUMN bar int")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(
-                squawk_result=make_result(returncode=1, stdout="some squawk warning\n"),
-            ),
-        ),
-    ):
-        assert main() == 1
+    mock_run.side_effect = fake_subprocess(
+        squawk_result=make_result(returncode=1, stdout="some squawk warning\n"),
+    )
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "some squawk warning" in captured.out
 
 
-def test_squawk_failure_replaces_tmp_path_in_output(repo, capsys):
+@patch("subprocess.run")
+def test_squawk_failure_replaces_tmp_path_in_output(mock_run, repo, capsys, monkeypatch):
     """Squawk output should show the original migration path, not the temp file path."""
     path = write_migration(
         repo,
@@ -110,11 +108,9 @@ def test_squawk_failure_replaces_tmp_path_in_output(repo, capsys):
             )
         raise ValueError(f"unexpected command: {cmd}")
 
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=side_effect),
-    ):
-        assert main() == 1
+    mock_run.side_effect = side_effect
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert path in captured.out
     assert path in captured.err
@@ -122,7 +118,8 @@ def test_squawk_failure_replaces_tmp_path_in_output(repo, capsys):
     assert "/tmp/" not in captured.err
 
 
-def test_alembic_failure_fails_run(repo, capsys):
+@patch("subprocess.run")
+def test_alembic_failure_fails_run(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "004_alembic_fail.py",
@@ -136,21 +133,16 @@ def test_alembic_failure_fails_run(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(
-                alembic_result=make_result(returncode=1, stderr="alembic error\n"),
-            ),
-        ),
-    ):
-        assert main() == 1
+    mock_run.side_effect = fake_subprocess(
+        alembic_result=make_result(returncode=1, stderr="alembic error\n"),
+    )
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "alembic upgrade --sql failed" in captured.err
 
 
-def test_unreadable_migration_file(repo, capsys):
+def test_unreadable_migration_file(repo, capsys, monkeypatch):
     """A migration file that can't be opened should produce a clear error, not a traceback."""
     path = write_migration(
         repo,
@@ -163,20 +155,19 @@ def test_unreadable_migration_file(repo, capsys):
             pass
         """,
     )
-    import os
-
     unreadable = repo / "migrations" / "versions" / "026_unreadable.py"
     os.chmod(unreadable, 0o000)
     try:
-        with patch("sys.argv", ["squawk-alembic", path]):
-            assert main() == 1
+        monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+        assert main() == 1
         captured = capsys.readouterr()
         assert "cannot read migration file" in captured.err
     finally:
         os.chmod(unreadable, 0o644)
 
 
-def test_missing_alembic_binary(repo, capsys):
+@patch("subprocess.run")
+def test_missing_alembic_binary(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "005_no_alembic.py",
@@ -196,16 +187,15 @@ def test_missing_alembic_binary(repo, capsys):
             raise FileNotFoundError
         raise ValueError(f"unexpected command: {cmd}")
 
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=alembic_not_found),
-    ):
-        assert main() == 1
+    mock_run.side_effect = alembic_not_found
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "alembic not found" in captured.err
 
 
-def test_missing_squawk_binary(repo, capsys):
+@patch("subprocess.run")
+def test_missing_squawk_binary(mock_run, repo, capsys, monkeypatch):
     """When squawk is not installed, the hook should fail with a helpful message."""
     path = write_migration(
         repo,
@@ -228,16 +218,15 @@ def test_missing_squawk_binary(repo, capsys):
             raise FileNotFoundError
         raise ValueError(f"unexpected command: {cmd}")
 
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=squawk_not_found),
-    ):
-        assert main() == 1
+    mock_run.side_effect = squawk_not_found
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "squawk not found" in captured.err
 
 
-def test_merge_migration_skipped(repo):
+@patch("subprocess.run")
+def test_merge_migration_skipped(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "006_merge.py",
@@ -251,15 +240,13 @@ def test_merge_migration_skipped(repo):
             pass
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run") as mock_run,
-    ):
-        assert main() == 0
-        mock_run.assert_not_called()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 0
+    mock_run.assert_not_called()
 
 
-def test_first_migration_uses_base(repo):
+@patch("subprocess.run")
+def test_first_migration_uses_base(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "007_first.py",
@@ -273,16 +260,15 @@ def test_first_migration_uses_base(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
-    ):
-        assert main() == 0
-        alembic_call = mock_run.call_args_list[0][0][0]
-        assert "base:first001" in alembic_call
+    mock_run.side_effect = fake_subprocess()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 0
+    alembic_call = mock_run.call_args_list[0][0][0]
+    assert "base:first001" in alembic_call
 
 
-def test_multiple_files_all_pass(repo):
+@patch("subprocess.run")
+def test_multiple_files_all_pass(mock_run, repo, monkeypatch):
     """All files should be processed when multiple are passed."""
     path1 = write_migration(
         repo,
@@ -310,16 +296,15 @@ def test_multiple_files_all_pass(repo):
             op.execute("CREATE TABLE b (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path1, path2]),
-        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
-    ):
-        assert main() == 0
-        # alembic + squawk for each file = 4 calls
-        assert mock_run.call_count == 4
+    mock_run.side_effect = fake_subprocess()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path1, path2])
+    assert main() == 0
+    # alembic + squawk for each file = 4 calls
+    assert mock_run.call_count == 4
 
 
-def test_multiple_files_first_fails_second_still_runs(repo, capsys):
+@patch("subprocess.run")
+def test_multiple_files_first_fails_second_still_runs(mock_run, repo, capsys, monkeypatch):
     """A failure in one file should not prevent linting of subsequent files."""
     path1 = write_migration(
         repo,
@@ -360,18 +345,17 @@ def test_multiple_files_first_fails_second_still_runs(repo, capsys):
             return make_result()
         raise ValueError(f"unexpected command: {cmd}")
 
-    with (
-        patch("sys.argv", ["squawk-alembic", path1, path2]),
-        patch("subprocess.run", side_effect=side_effect) as mock_run,
-    ):
-        assert main() == 1
-        # alembic (fail) + alembic (pass) + squawk (pass) = 3
-        assert mock_run.call_count == 3
+    mock_run.side_effect = side_effect
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path1, path2])
+    assert main() == 1
+    # alembic (fail) + alembic (pass) + squawk (pass) = 3
+    assert mock_run.call_count == 3
     captured = capsys.readouterr()
     assert "alembic upgrade --sql failed" in captured.err
 
 
-def test_diff_branch_skips_existing_file(repo):
+@patch("subprocess.run")
+def test_diff_branch_skips_existing_file(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "008_existing.py",
@@ -385,21 +369,17 @@ def test_diff_branch_skips_existing_file(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(git_exists_on_branch=True),
-        ) as mock_run,
-    ):
-        assert main() == 0
-        # git rev-parse (validation) + git cat-file (exists check), no alembic or squawk
-        assert mock_run.call_count == 2
-        assert mock_run.call_args_list[0][0][0][0] == "git"
-        assert mock_run.call_args_list[1][0][0][0] == "git"
+    mock_run.side_effect = fake_subprocess(git_exists_on_branch=True)
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "main", path])
+    assert main() == 0
+    # git rev-parse (validation) + git cat-file (exists check), no alembic or squawk
+    assert mock_run.call_count == 2
+    assert mock_run.call_args_list[0][0][0][0] == "git"
+    assert mock_run.call_args_list[1][0][0][0] == "git"
 
 
-def test_diff_branch_lints_new_file(repo):
+@patch("subprocess.run")
+def test_diff_branch_lints_new_file(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "009_new.py",
@@ -413,19 +393,15 @@ def test_diff_branch_lints_new_file(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(git_exists_on_branch=False),
-        ) as mock_run,
-    ):
-        assert main() == 0
-        # git rev-parse + git cat-file + alembic + squawk = 4 calls
-        assert mock_run.call_count == 4
+    mock_run.side_effect = fake_subprocess(git_exists_on_branch=False)
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "main", path])
+    assert main() == 0
+    # git rev-parse + git cat-file + alembic + squawk = 4 calls
+    assert mock_run.call_count == 4
 
 
-def test_diff_branch_nonexistent_branch_errors(repo, capsys):
+@patch("subprocess.run")
+def test_diff_branch_nonexistent_branch_errors(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "011_nonexistent.py",
@@ -439,21 +415,17 @@ def test_diff_branch_nonexistent_branch_errors(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "nonexistent", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(git_branch_valid=False),
-        ) as mock_run,
-    ):
-        assert main() == 1
-        # Only the git rev-parse validation call, then early exit
-        assert mock_run.call_count == 1
+    mock_run.side_effect = fake_subprocess(git_branch_valid=False)
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "nonexistent", path])
+    assert main() == 1
+    # Only the git rev-parse validation call, then early exit
+    assert mock_run.call_count == 1
     captured = capsys.readouterr()
     assert "not found in git" in captured.err
 
 
-def test_diff_branch_traversal_rejected(repo, capsys):
+@patch("subprocess.run")
+def test_diff_branch_traversal_rejected(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "013_traversal.py",
@@ -467,17 +439,15 @@ def test_diff_branch_traversal_rejected(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "refs/../main", path]),
-        patch("subprocess.run") as mock_run,
-    ):
-        assert main() == 1
-        mock_run.assert_not_called()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "refs/../main", path])
+    assert main() == 1
+    mock_run.assert_not_called()
     captured = capsys.readouterr()
     assert "invalid branch name" in captured.err
 
 
-def test_diff_branch_missing_git_binary(repo, capsys):
+@patch("subprocess.run")
+def test_diff_branch_missing_git_binary(mock_run, repo, capsys, monkeypatch):
     path = write_migration(
         repo,
         "014_no_git.py",
@@ -491,16 +461,15 @@ def test_diff_branch_missing_git_binary(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
-        patch("subprocess.run", side_effect=FileNotFoundError),
-    ):
-        assert main() == 1
+    mock_run.side_effect = FileNotFoundError
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "main", path])
+    assert main() == 1
     captured = capsys.readouterr()
     assert "git not found" in captured.err
 
 
-def test_without_diff_branch_lints_all(repo):
+@patch("subprocess.run")
+def test_without_diff_branch_lints_all(mock_run, repo, monkeypatch):
     path = write_migration(
         repo,
         "010_all.py",
@@ -514,16 +483,15 @@ def test_without_diff_branch_lints_all(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", path]),
-        patch("subprocess.run", side_effect=fake_subprocess()) as mock_run,
-    ):
-        assert main() == 0
-        # No git call, just alembic + squawk = 2 calls
-        assert mock_run.call_count == 2
+    mock_run.side_effect = fake_subprocess()
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", path])
+    assert main() == 0
+    # No git call, just alembic + squawk = 2 calls
+    assert mock_run.call_count == 2
 
 
-def test_origin_branch_shallow_fetch_succeeds(repo):
+@patch("subprocess.run")
+def test_origin_branch_shallow_fetch_succeeds(mock_run, repo, monkeypatch):
     """In CI shallow clones, origin/main may not exist locally; the hook should fetch it."""
     path = write_migration(
         repo,
@@ -538,26 +506,22 @@ def test_origin_branch_shallow_fetch_succeeds(repo):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "origin/main", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(
-                git_branch_valid=False,
-                git_fetch_succeeds=True,
-                git_exists_on_branch=False,
-            ),
-        ) as mock_run,
-    ):
-        assert main() == 0
-        # git rev-parse (fail) + git fetch + git cat-file + alembic + squawk = 5 calls
-        assert mock_run.call_count == 5
-        assert mock_run.call_args_list[0][0][0][0] == "git"
-        assert "fetch" in mock_run.call_args_list[1][0][0]
-        assert "cat-file" in mock_run.call_args_list[2][0][0]
+    mock_run.side_effect = fake_subprocess(
+        git_branch_valid=False,
+        git_fetch_succeeds=True,
+        git_exists_on_branch=False,
+    )
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path])
+    assert main() == 0
+    # git rev-parse (fail) + git fetch + git cat-file + alembic + squawk = 5 calls
+    assert mock_run.call_count == 5
+    assert mock_run.call_args_list[0][0][0][0] == "git"
+    assert "fetch" in mock_run.call_args_list[1][0][0]
+    assert "cat-file" in mock_run.call_args_list[2][0][0]
 
 
-def test_origin_branch_shallow_fetch_fails(repo, capsys):
+@patch("subprocess.run")
+def test_origin_branch_shallow_fetch_fails(mock_run, repo, capsys, monkeypatch):
     """When both rev-parse and fetch fail, the hook should error."""
     path = write_migration(
         repo,
@@ -572,24 +536,20 @@ def test_origin_branch_shallow_fetch_fails(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "origin/main", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(
-                git_branch_valid=False,
-                git_fetch_succeeds=False,
-            ),
-        ) as mock_run,
-    ):
-        assert main() == 1
-        # git rev-parse (fail) + git fetch (fail) = 2 calls
-        assert mock_run.call_count == 2
+    mock_run.side_effect = fake_subprocess(
+        git_branch_valid=False,
+        git_fetch_succeeds=False,
+    )
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "origin/main", path])
+    assert main() == 1
+    # git rev-parse (fail) + git fetch (fail) = 2 calls
+    assert mock_run.call_count == 2
     captured = capsys.readouterr()
     assert "not found in git" in captured.err
 
 
-def test_non_origin_branch_no_fetch_attempted(repo, capsys):
+@patch("subprocess.run")
+def test_non_origin_branch_no_fetch_attempted(mock_run, repo, capsys, monkeypatch):
     """Non-origin branches should not trigger a fetch attempt."""
     path = write_migration(
         repo,
@@ -604,15 +564,10 @@ def test_non_origin_branch_no_fetch_attempted(repo, capsys):
             op.execute("CREATE TABLE foo (id int)")
         """,
     )
-    with (
-        patch("sys.argv", ["squawk-alembic", "--diff-branch", "main", path]),
-        patch(
-            "subprocess.run",
-            side_effect=fake_subprocess(git_branch_valid=False),
-        ) as mock_run,
-    ):
-        assert main() == 1
-        # Only git rev-parse (fail), no fetch attempted
-        assert mock_run.call_count == 1
+    mock_run.side_effect = fake_subprocess(git_branch_valid=False)
+    monkeypatch.setattr(sys, "argv", ["squawk-alembic", "--diff-branch", "main", path])
+    assert main() == 1
+    # Only git rev-parse (fail), no fetch attempted
+    assert mock_run.call_count == 1
     captured = capsys.readouterr()
     assert "not found in git" in captured.err
