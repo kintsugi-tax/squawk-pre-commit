@@ -41,6 +41,7 @@ squawk-alembic = "squawk_alembic.hook:main"
 
 [tool.ruff]
 exclude = [".venv"]
+target-version = "py310"
 
 [tool.ruff.format]
 quote-style = "double"
@@ -50,7 +51,7 @@ line-ending = "auto"
 docstring-code-format = false
 
 [tool.ruff.lint]
-extend-select = ["I", "F"]
+extend-select = ["I", "F", "B", "UP", "SIM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["squawk_alembic"]
@@ -70,3 +71,7 @@ search-path = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--strict-markers", "--tb=short"]
+
+[tool.coverage.run]
+source = ["squawk_alembic"]

@@ -7,7 +7,7 @@ import pytest
 
 from squawk_alembic.hook import GenerateSqlError, generate_sql
 
-from .conftest import make_result
+from .helpers import make_result
 
 
 def write_file(tmp_path, source):

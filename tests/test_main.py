@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from squawk_alembic.hook import main
 
-from .conftest import fake_subprocess, make_result, write_migration
+from .helpers import fake_subprocess, make_result, write_migration
 
 
 def test_no_files(repo, monkeypatch):

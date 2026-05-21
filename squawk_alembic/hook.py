@@ -39,6 +39,8 @@ def find_migrations_path() -> Path | None:
 
 @dataclass(frozen=True, slots=True)
 class RevisionInfo:
+    """Parsed revision and down_revision from an alembic migration file."""
+
     revision: str
     down_revision: str | tuple[str, ...] | None
     is_merge: bool
@@ -123,6 +125,7 @@ def generate_sql(filepath: str | Path) -> str | None:
             capture_output=True,
             text=True,
             env=env,
+            timeout=120,
         )
     except FileNotFoundError as exc:
         raise GenerateSqlError(
@@ -153,6 +156,7 @@ def validate_branch(branch: str) -> bool:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", branch],
             capture_output=True,
+            timeout=30,
         )
     except FileNotFoundError:
         print("squawk-alembic: git not found", file=sys.stderr)
@@ -165,6 +169,7 @@ def validate_branch(branch: str) -> bool:
         fetch = subprocess.run(
             ["git", "fetch", "origin", remote_branch, "--depth=1"],
             capture_output=True,
+            timeout=30,
         )
         if fetch.returncode == 0:
             return True
@@ -182,6 +187,7 @@ def file_exists_on_branch(filepath: str, branch: str) -> bool:
         result = subprocess.run(
             ["git", "cat-file", "-e", f"{branch}:{filepath}"],
             capture_output=True,
+            timeout=30,
         )
     except FileNotFoundError:
         return False
@@ -220,15 +226,16 @@ def _lint_file(filepath: str, migrations_path: Path, diff_branch: str | None) ->
     if not sql:
         return 0
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
-        tmp.write(sql)
-        tmp_path = tmp.name
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(sql)
         result = subprocess.run(
             ["squawk", tmp_path],
             capture_output=True,
             text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             output = result.stdout.replace(tmp_path, filepath)
@@ -238,10 +245,11 @@ def _lint_file(filepath: str, migrations_path: Path, diff_branch: str | None) ->
             if error:
                 print(error, file=sys.stderr)
             return 1
-    except FileNotFoundError:
-        raise _SquawkNotFound
+    except FileNotFoundError as exc:
+        raise _SquawkNotFound from exc
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
     return 0
 
