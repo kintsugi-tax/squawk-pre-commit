@@ -30,3 +30,10 @@ htmlcov/
 
 # Python version
 .python-version
+
+# Local agent/tool state (regenerated; not deliverables)
+.full-review*/
+.serena/
+
+# Planning docs kept local by default (see planning-doc-placement rule)
+docs/plans/
