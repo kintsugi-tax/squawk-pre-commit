@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 10
     outputs:
       code_changed: ${{ steps.changes.outputs.code_changed }}
@@ -82,7 +82,7 @@ jobs:
   auto-tag:
     needs: lint-and-test
     if: github.event_name == 'push' && needs.lint-and-test.outputs.code_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 5
     permissions:
       contents: write
@@ -125,7 +125,7 @@ jobs:
   release:
     needs: auto-tag
     if: needs.auto-tag.outputs.created == 'true'
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 5
     permissions:
       contents: write
