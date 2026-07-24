@@ -239,7 +239,10 @@ def _lint_file(filepath: str, migrations_path: Path, diff_branch: str | None) ->
                 print(error, file=sys.stderr)
             return 1
     except FileNotFoundError:
-        raise _SquawkNotFound
+        # Translate the low-level "squawk binary missing" OSError into our domain
+        # error; the original FileNotFoundError is an implementation detail, so
+        # suppress its chain with `from None`.
+        raise _SquawkNotFound from None
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

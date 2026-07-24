@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "squawk-alembic"
-version = "0.3.3"
+version = "0.3.5"
 description = "Pre-commit hook to lint Alembic migration SQL with squawk"
 packages = [{include = "squawk_alembic"}]
 readme = "README.md"
@@ -32,9 +32,10 @@ squawk-cli = ">=2.0"
 alembic = "~=1.18.4"
 pre-commit = "~=4.6.0"
 pytest = "~=9.0.3"
-ruff = "~=0.15.14"
-pyrefly = "~=1.0.0"
+ruff = "~=0.13.3"
+pyrefly = "~=1.1.1"
 pytest-cov = "~=7.1.0"
+diff-cover = "~=10.2.1"
 
 [tool.poetry.scripts]
 squawk-alembic = "squawk_alembic.hook:main"
@@ -50,7 +51,7 @@ line-ending = "auto"
 docstring-code-format = false
 
 [tool.ruff.lint]
-extend-select = ["I", "F"]
+extend-select = ["I", "F", "UP", "B", "SIM", "C4"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["squawk_alembic"]
