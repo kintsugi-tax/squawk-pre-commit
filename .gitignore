@@ -18,6 +18,7 @@ dist/
 # Test / coverage
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 
 # Editors / OS
