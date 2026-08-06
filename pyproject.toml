@@ -28,16 +28,16 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = ">=3.10"
-squawk-cli = ">=2.0"
+squawk-cli = ">=2.61.0"
 
 [tool.poetry.group.dev.dependencies]
-alembic = "~=1.18.4"
-pre-commit = "~=4.6.0"
-pytest = "~=9.0.3"
-ruff = "~=0.13.3"
+alembic = "~=1.18.5"
+pre-commit = "~=4.6.1"
+pytest = "~=9.1.1"
+ruff = "~=0.16.0"
 pyrefly = "~=1.1.1"
 pytest-cov = "~=7.1.0"
-diff-cover = "~=10.2.1"
+diff-cover = "~=10.4.1"
 
 [tool.poetry.scripts]
 squawk-alembic = "squawk_alembic.hook:main"
