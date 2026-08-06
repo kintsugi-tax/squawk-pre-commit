@@ -64,7 +64,10 @@ jobs:
           fi
           echo "Versions match: $PYPROJECT_VERSION"
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Dependabot never bumps the package version, only dependencies, so
+          # exempt it from the version-bump requirement or its dependency PRs
+          # (which edit pyproject.toml) would always fail this check.
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.actor }}" != "dependabot[bot]" ]; then
             git fetch origin main --depth=1
             MAIN_VERSION=$(git show origin/main:pyproject.toml | python -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['tool']['poetry']['version'])" || true)
             if [ -z "$MAIN_VERSION" ]; then
