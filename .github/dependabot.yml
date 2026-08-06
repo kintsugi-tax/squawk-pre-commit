@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # Python dependencies (Poetry, via pyproject.toml + poetry.lock) with grouped
+  # patch/minor updates. Major bumps are ignored here and handled deliberately.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 5
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    versioning-strategy: "increase"
+    groups:
+      python-packages:
+        patterns:
+          - "*"
+        update-types: ["patch", "minor"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

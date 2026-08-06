@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "squawk-alembic"
-version = "0.3.5"
+version = "0.3.6"
 description = "Pre-commit hook to lint Alembic migration SQL with squawk"
 packages = [{include = "squawk_alembic"}]
 readme = "README.md"
@@ -22,6 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 [tool.poetry.dependencies]
