@@ -22,6 +22,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # squawk-cli's >=2.0 floor is intentionally broad so consumers can pin any
+      # squawk 2.x via additional_dependencies. Do not let Dependabot tighten it.
+      - dependency-name: "squawk-cli"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
