@@ -68,7 +68,7 @@ project-excludes = [
     "**/.*",
 ]
 python-platform = "linux"
-python-version = "3.13.0"
+python-version = "3.10.0"
 infer-with-first-use = false
 search-path = ["."]
 
